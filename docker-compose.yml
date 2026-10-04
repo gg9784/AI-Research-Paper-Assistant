@@ -1,29 +1,57 @@
-﻿version: "3.9"
+version: "3.9"
+
+# docker-compose is an orchestration tool for running multi-container Docker applications.
+# Instead of running `docker run ...` with 20 flags for the backend and again for the frontend,
+# this file defines the entire stack declaratively in one place.
 
 services:
+  # ════════════════════════════════════════════════════════════════════════════
+  # BACKEND SERVICE (FastAPI)
+  # ════════════════════════════════════════════════════════════════════════════
   backend:
     build:
-      context: ./backend
+      context: ./backend      # Look for Dockerfile in the ./backend directory
       dockerfile: Dockerfile
     container_name: research-assistant-backend
+    
+    # Map host port 8000 to container port 8000
     ports:
       - "8000:8000"
+      
+    # VOLUMES: Map directories on your host machine to directories inside the container.
+    # 1. Bind mount: ./backend:/app -> syncs code live (good for dev)
+    # 2. Named volumes: backend_uploads, backend_chroma -> persists data across restarts
     volumes:
       - ./backend:/app
       - backend_uploads:/app/uploads
       - backend_chroma:/app/chroma_db
+      
+    # ENVIRONMENT VARIABLES:
+    # ${OPENAI_API_KEY} reads from a .env file on your host machine.
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
       - CORS_ORIGINS=http://localhost:3000
+      
     restart: unless-stopped
+    
+    # OVERRIDE CMD FOR LOCAL DEV:
+    # We add --reload here so Uvicorn restarts when code changes.
+    # The bind mount (./backend:/app) makes those code changes visible to the container.
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    
+    # HEALTHCHECK:
+    # Tells Docker if the app is actually ready to serve traffic, not just if the process is running.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
 
+  # ════════════════════════════════════════════════════════════════════════════
+  # FRONTEND SERVICE (Next.js)
+  # ════════════════════════════════════════════════════════════════════════════
   frontend:
     build:
       context: ./frontend
@@ -33,13 +61,18 @@ services:
       - "3000:3000"
     volumes:
       - ./frontend:/app
-      - /app/node_modules
+      - /app/node_modules    # Anonymous volume: prevents host node_modules from overwriting container's
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
     depends_on:
-      - backend
+      - backend              # Ensures backend starts before frontend
     restart: unless-stopped
 
+# ══════════════════════════════════════════════════════════════════════════════
+# NAMED VOLUMES
+# ══════════════════════════════════════════════════════════════════════════════
+# Named volumes are managed by Docker. They survive container deletion (docker-compose down).
+# To delete them completely (e.g., to clear the DB), you must run: docker-compose down -v
 volumes:
   backend_uploads:
   backend_chroma:
